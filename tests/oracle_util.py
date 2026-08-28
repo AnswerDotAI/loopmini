@@ -1,5 +1,5 @@
 "Fetch, cache, and adapt external event-loop conformance suites (CPython, anyio, uvloop)."
-import asyncio, hashlib, importlib.metadata, importlib.util, inspect, os, platform, shutil, sys, tarfile, types, unittest, urllib.request
+import asyncio, contextlib, fcntl, hashlib, importlib.metadata, importlib.util, inspect, os, platform, shutil, sys, tarfile, types, unittest, urllib.request
 from pathlib import Path
 import loopmini
 
@@ -15,6 +15,14 @@ def _fetch_tar(url, dest_dir):
     with tarfile.open(tar_path) as tf: tf.extractall(dest_dir, filter='data')
     tar_path.unlink()
 
+@contextlib.contextmanager
+def _cache_lock(path):
+    "Serialize the first fetch/adaptation of one cache entry across xdist workers."
+    path.mkdir(parents=True, exist_ok=True)
+    with open(path/'.lock', 'w') as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        yield
+
 def rmtree_force(p):
     "Remove tree `p` even where permission-test leftovers are chmod-000."
     os.chmod(p, 0o700)
@@ -26,8 +34,11 @@ def rmtree_force(p):
 def cpython_test_dir():
     "The Lib/ directory of the CPython source matching this interpreter, holding the `test` package."
     ver = platform.python_version()
-    lib = CACHE/f'cpython-{ver}'/f'Python-{ver}'/'Lib'
-    if not (lib/'test').exists(): _fetch_tar(f'https://www.python.org/ftp/python/{ver}/Python-{ver}.tgz', CACHE/f'cpython-{ver}')
+    cache = CACHE/f'cpython-{ver}'
+    lib = cache/f'Python-{ver}'/'Lib'
+    if not (lib/'test').exists():
+        with _cache_lock(cache):
+            if not (lib/'test').exists(): _fetch_tar(f'https://www.python.org/ftp/python/{ver}/Python-{ver}.tgz', cache)
     return lib
 
 def _adapted_sdist(name, ver, adapt):
@@ -36,9 +47,11 @@ def _adapted_sdist(name, ver, adapt):
     cache = CACHE/f'{name}-{ver}-{key}'
     root,ready = cache/f'{name}-{ver}',cache/'.ready'
     if not ready.exists():
-        _fetch_tar(f'https://files.pythonhosted.org/packages/source/{name[0]}/{name}/{name}-{ver}.tar.gz', cache)
-        adapt(root)
-        ready.touch()
+        with _cache_lock(cache):
+            if not ready.exists():
+                _fetch_tar(f'https://files.pythonhosted.org/packages/source/{name[0]}/{name}/{name}-{ver}.tar.gz', cache)
+                adapt(root)
+                ready.touch()
     return root
 
 def _adapt_anyio(root):
