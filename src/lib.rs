@@ -1,12 +1,10 @@
-pub mod reactor;
-pub mod tokio_core;
 mod pyreactor;
+pub mod reactor;
 
 use pyo3::prelude::*;
 
 pub use pyreactor::PyReactor;
 pub use reactor::Reactor as ReactorCore;
-pub use tokio_core::TokioCore;
 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
