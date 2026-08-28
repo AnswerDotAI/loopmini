@@ -1,0 +1,45 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "loopmini"
+dynamic = ["version"]
+description = "Rust-backed asyncio event loop"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+readme = "README.md"
+authors = [{name = "Jeremy Howard", email = "github@jhoward.fastmail.fm"}]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.optional-dependencies]
+dev = ["fastship>=0.0.11", "maturin>=1.0,<2.0", "pytest", "pytest-timeout"]
+
+[project.urls]
+Homepage = "https://github.com/AnswerDotAI/loopmini"
+Repository = "https://github.com/AnswerDotAI/loopmini"
+Issues = "https://github.com/AnswerDotAI/loopmini/issues"
+
+[tool.maturin]
+features = ["extension-module"]
+python-source = "python"
+module-name = "loopmini._core"
+
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = "Cargo.lock" }]
+
+[tool.fastship]
+branch = "main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 60
+addopts = "-m 'not oracle and not bench and not soak'"
+markers = [
+    "oracle: external conformance suites (run with `pytest -m oracle`)",
+    "bench: performance snapshots (run with `pytest -m bench -s`)",
+    "soak: sustained kernel-shaped workload (run with `pytest -m soak -s`)",
+]
