@@ -276,6 +276,7 @@ def test_interrupt_torture_under_load():
             while (line := await reader.readline()):
                 writer.write(line)
                 await writer.drain()
+            writer.close()
         server = await asyncio.start_server(handler, '127.0.0.1', 0)
         port = server.sockets[0].getsockname()[1]
         async def pinger(i):
