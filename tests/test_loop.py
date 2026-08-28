@@ -2,7 +2,8 @@
 import asyncio, contextvars, ctypes, os, pytest, random, signal, socket, sys, threading, time
 import loopmini
 
-def run(coro): return asyncio.run(coro, loop_factory=loopmini.new_event_loop)
+def run(coro):
+    with asyncio.Runner(loop_factory=loopmini.new_event_loop) as r: return r.run(coro)
 
 def test_cancelled_timer_released():
     """A cancelled timer must leave the reactor's timer map at once.

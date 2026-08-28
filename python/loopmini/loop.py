@@ -180,7 +180,13 @@ class Loop(base_events.BaseEventLoop):
     sock_connect,_sock_connect,_sock_connect_cb = _SelLoop.sock_connect,_SelLoop._sock_connect,_SelLoop._sock_connect_cb
 
     def _make_socket_transport(self, sock, protocol, waiter=None, *, extra=None, server=None, context=None):
-        return SockTransport(self, sock, protocol, waiter, extra, server, context)
+        # The accept path (gh: _accept_connection2) swallows transport-creation errors
+        # outside debug mode; report before re-raising so server-side bugs are never silent
+        try: return SockTransport(self, sock, protocol, waiter, extra, server, context)
+        except (SystemExit, KeyboardInterrupt): raise
+        except BaseException as e:
+            if server is not None: self.call_exception_handler(dict(message='loopmini: error creating server-side transport', exception=e, socket=sock))
+            raise
 
     def _make_ssl_transport(self, sock, protocol, sslcontext, waiter=None, *, server_side=False, server_hostname=None, extra=None, server=None,
         ssl_handshake_timeout=None, ssl_shutdown_timeout=None, call_connection_made=True, context=None):
