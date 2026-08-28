@@ -1,5 +1,6 @@
 "Socket transports for the Rust-reactor loop, feeding stock asyncio protocols."
-import asyncio, socket
+import asyncio, socket, sys
+_server_takes_transport = sys.version_info >= (3, 13)  # Server._attach/_detach gained the transport arg in 3.13 (gh-113538)
 from asyncio import constants, futures, transports
 
 class _TransportLifecycle:
@@ -40,7 +41,7 @@ class SockTransport(_TransportLifecycle, transports._FlowControlMixin):
             except OSError: pass
         self._buffer = bytearray()
         self._closing = self._reading = self._eof = self._lost = False
-        if server is not None: server._attach(self)
+        if server is not None: server._attach(self) if _server_takes_transport else server._attach()
         loop.call_soon(protocol.connection_made, self, context=context)
         loop.call_soon(self.resume_reading, context=context)
         if waiter is not None: loop.call_soon(futures._set_result_unless_cancelled, waiter, None)
@@ -137,7 +138,7 @@ class SockTransport(_TransportLifecycle, transports._FlowControlMixin):
     def _close_resource(self):
         self._sock.close()
         if self._server is not None:
-            self._server._detach(self)
+            self._server._detach(self) if _server_takes_transport else self._server._detach()
             self._server = None
 
 class DatagramTransport(_TransportLifecycle, asyncio.DatagramTransport):
