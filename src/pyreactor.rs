@@ -1,31 +1,19 @@
 //! The Python-facing reactor: scheduling and readiness methods plus the canonical
-//! dispatch loop, as one pyclass both extensions compile in. `loopmini._core`
-//! registers it with an owned runtime; an embedding extension (`kernmini._native`)
-//! constructs it with `with_handle` on its own runtime. The dispatch loop carries
-//! the injected-exception requeue rule, which must exist exactly once.
-use crate::tokio_core::TokioCore;
+//! dispatch loop. The dispatch loop carries the injected-exception requeue rule,
+//! which must exist exactly once.
+use crate::reactor::Reactor as ReactorCore;
 use polling::Events;
 use pyo3::intern;
 use pyo3::prelude::*;
 use std::ops::ControlFlow;
-use tokio::runtime::Handle;
 
 #[pyclass(name = "Reactor")]
-pub struct PyReactor { core: TokioCore<Py<PyAny>> }
-
-impl PyReactor {
-    /// A reactor whose blocking waits run on `handle`'s runtime. Call `run` only
-    /// from a thread outside that runtime (a Python main or session thread):
-    /// Tokio panics on `block_on` from one of the runtime's own workers.
-    pub fn with_handle(handle: Handle) -> PyResult<Self> {
-        Ok(Self { core: TokioCore::with_handle(handle)? })
-    }
-}
+pub struct PyReactor { core: ReactorCore<Py<PyAny>> }
 
 #[pymethods]
 impl PyReactor {
     #[new]
-    fn new() -> PyResult<Self> { Ok(Self { core: TokioCore::new()? }) }
+    fn new() -> PyResult<Self> { Ok(Self { core: ReactorCore::new()? }) }
 
     fn time(&self) -> f64 { self.core.time() }
     fn schedule(&self, h: Py<PyAny>) { self.core.schedule(h) }
@@ -56,23 +44,14 @@ impl PyReactor {
                 // An injected async exception (e.g. KeyboardInterrupt) can surface at either
                 // Python call; only a handle whose _run began may be dropped without requeue.
                 let cancelled = h.bind(py).getattr(intern!(py, "_cancelled")).and_then(|v| v.extract::<bool>());
-                match cancelled {
-                    Err(e) => {
-                        self.core.requeue_front(std::iter::once(h).chain(it));
-                        return Err(e);
-                    }
-                    Ok(true) => continue,
-                    Ok(false) => {}
-                }
+                match cancelled { Err(e) => { self.core.requeue_front(std::iter::once(h).chain(it)); return Err(e); } Ok(true) => continue, Ok(false) => {} }
                 if let Err(e) = h.bind(py).call_method0(intern!(py, "_run")) {
                     // An injected exception surfacing at `_run`'s entry leaves a single-frame
                     // traceback: the callback never ran, so requeue the handle - dropping it
                     // would lose e.g. a task wakeup and orphan the task. A deeper traceback
                     // means the callback began, so the handle is consumed (CPython semantics).
-                    let entry_only = e.traceback(py)
-                        .map_or(true, |tb| tb.getattr("tb_next").ok().is_none_or(|n| n.is_none()));
-                    if entry_only { self.core.requeue_front(std::iter::once(h).chain(it)) }
-                    else { self.core.requeue_front(it) }
+                    let entry_only = e.traceback(py).map_or(true, |tb| tb.getattr("tb_next").ok().is_none_or(|n| n.is_none()));
+                    if entry_only { self.core.requeue_front(std::iter::once(h).chain(it)) } else { self.core.requeue_front(it) }
                     return Err(e);
                 }
             }

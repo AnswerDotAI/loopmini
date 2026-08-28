@@ -2,104 +2,27 @@
 
 ## Why this exists
 
-Kernmini's Rust engine (see kernmini `meta/ROUGH.md`, "Separate project idea: a
-Tokio-backed asyncio loop" and the 2026-08-28 review) needs Python kernels to
-run arbitrary user asyncio code. loopmini tests whether a Rust reactor can host
-that loop with full asyncio compatibility. The compatibility bar is the full
-public asyncio surface, because solveit users run arbitrary packages; the
-strategy for meeting it is maximal reuse of CPython's own asyncio machinery,
-with Rust owning only what Python cannot express well.
+Kernmini's Rust engine (see kernmini `meta/ROUGH.md`, "Separate project idea: a Rust-backed asyncio loop" and the 2026-08-28 review) needs Python kernels to run arbitrary user asyncio code. loopmini tests whether a Rust reactor can host that loop with full asyncio compatibility. The compatibility bar is the full public asyncio surface, because solveit users run arbitrary packages; the strategy is maximal reuse of CPython's own asyncio machinery, with Rust owning only what Python cannot express well.
 
 ## Crate/Python split
 
-A key goal is that Rust crates and PyO3 wrappers share code: the same reactor
-must be drivable by a pure-Rust kernel (as kernmini's native crate will be).
-So the crate has three layers:
+A key goal is that Rust crates and PyO3 wrappers share code: the same reactor must be drivable by a pure-Rust kernel (as kernmini's native crate will be). The implementation has two layers plus module registration:
 
-- `src/reactor.rs`: `Reactor<H>`, a PyO3-free, Tokio-free core generic over
-  the handle type. Ready queue, timer map, fd interest map (oneshot `polling`
-  sources, re-armed on delivery), thread-safe `schedule_ts` + notify, and the
-  turn phases: `next_timeout` / `poll` / `process` / `take_batch` /
-  `requeue_front`. `poll` holds no locks, so a driver may block in it with the
-  GIL released. The crate builds as an rlib, so a Rust consumer instantiates
-  `Reactor<RustHandle>` directly.
-- `src/tokio_core.rs`: the reactor hosted on a Tokio current-thread runtime.
-  Tokio waits on the kqueue's own fd (a kqueue is pollable) and a zero-timeout
-  drain then collects events, so the kqueue-native level/oneshot semantics
-  that asyncio's `add_reader` contract needs survive Tokio's edge-triggered
-  driver. Rust futures spawned on the runtime advance during every blocking
-  poll, with the GIL released: the shared-reactor path for kernmini's engine.
-  Zero-timeout turns skip the runtime entirely, because entering it rounds the
-  wait up to the timer driver's ~1ms tick.
-- `src/pyreactor.rs`: `PyReactor`, the Python-facing pyclass: the scheduling
-  and readiness methods plus the canonical dispatch loop (`check_signals` each
-  turn, `py.detach` around `poll`, EINTR retry, and the injected-exception
-  requeue rule, which must exist exactly once). `loopmini._core` registers it
-  on an owned runtime; kernmini's Python feature compiles the same struct and constructs
-  it with `PyReactor::with_handle` on kernmini's runtime. Rust has no stable
-  dylib ABI, so runtimes and reactors never cross extension boundaries: each
-  extension compiles the crate in, and the Python-visible reactor methods are
-  the only shared surface. `Loop(reactor=...)` accepts such a foreign reactor.
-- `src/lib.rs`: module registration and the public re-exports (`ReactorCore`,
-  `TokioCore`, `PyReactor`) for embedding crates.
+- `src/reactor.rs`: `Reactor<H>`, a PyO3-free, Tokio-free core generic over the handle type. It owns the ready queue, timer map, fd interest map (oneshot `polling` sources, re-armed on delivery), thread-safe `schedule_ts` + notify, and the turn phases: `next_timeout` / `poll` / `process` / `take_batch` / `requeue_front`. `poll` holds no locks, so a driver may block in it with the GIL released. The crate builds as an rlib, so a Rust consumer instantiates `Reactor<RustHandle>` directly.
+- `src/pyreactor.rs`: `PyReactor`, the Python-facing pyclass: the scheduling and readiness methods plus the canonical dispatch loop (`check_signals` each turn, `py.detach` around `poll`, EINTR retry, and the injected-exception requeue rule, which must exist exactly once). The driver blocks directly in the core poller with the GIL released. Rust runtimes keep their futures on worker threads and wake the loop with its thread-safe scheduling path.
+- `src/lib.rs`: module registration and the public re-exports (`ReactorCore`, `PyReactor`) for embedding crates.
 
-Python (`python/loopmini/loop.py`) implements `asyncio.AbstractEventLoop` by
-delegating scheduling to the reactor and reusing stock `Handle`, `TimerHandle`,
-`Task`, `Future`, and `wrap_future`. That reuse is a design decision, not a
-shortcut: it buys exact contextvars, cancellation, and introspection semantics
-and removes the most version-sensitive surface. `run_forever` on the main
-thread routes signals through `signal.set_wakeup_fd` into an fd the reactor
-watches, matching `BaseSelectorEventLoop`.
+Python (`python/loopmini/loop.py`) subclasses `asyncio.BaseEventLoop`, delegating scheduling to the reactor while inheriting task/future creation, executors, exception handling, high-level networking, TLS orchestration, servers, subprocess entry points, and buffered sendfile. Reactor-neutral implementations of socket operations and accepting connections are borrowed from `BaseSelectorEventLoop`; Unix connection/server methods and pipe transports are borrowed from `_UnixSelectorEventLoop`. Loopmini supplies the hooks those implementations call. This reuse buys exact CPython contextvars, cancellation, introspection, lifecycle, and version-specific semantics. `run_forever` on the main thread routes signals through `signal.set_wakeup_fd` into an fd watched by the reactor.
 
 ## Implemented surface
 
-Beyond the scheduling core: TCP transports (`transports.py`: `SockTransport`
-speaking both `Protocol` and `BufferedProtocol`, with `TCP_NODELAY` set as the
-standard loop does, and `MiniServer` with the accept loop),
-`create_connection`/`create_server` and their Unix-socket twins,
-`connect_accepted_socket`, UDP via `DatagramTransport` and
-`create_datagram_endpoint`, `start_tls` (including the gh-142352
-buffered-StreamReader move), TLS client and server via stock `asyncio.sslproto`
-over our transports, `getaddrinfo`/`getnameinfo` through the executor, and
-`add_signal_handler`/`remove_signal_handler` dispatched from the
-`set_wakeup_fd` socketpair (main-thread loops only, as in the standard loop),
-pipe transports (`connect_read_pipe`/`connect_write_pipe`), and
-`subprocess_exec`/`subprocess_shell` (`subproc.py`: Popen spawned in the
-executor since fork/exec blocks, one reaper thread per child as in asyncio's
-default ThreadedChildWatcher, and pipe transports over the child's fds).
+Beyond the scheduling core, loopmini implements TCP transports (`SockTransport`, speaking both `Protocol` and `BufferedProtocol`, with `TCP_NODELAY`), UDP (`DatagramTransport`), signal dispatch through the `set_wakeup_fd` socketpair, and the reactor's reader/writer registrations. CPython supplies the high-level TCP/UDP/TLS/Unix/server operations, Unix pipe transports, flow control, and buffered sendfile. `subproc.py` prepares `Popen` in the executor because fork/exec blocks, then gives it to CPython's `BaseSubprocessTransport`; one reaper thread per child reports exit through the loop's thread-safe scheduling path.
 
-Contracts learned from the oracles, kept working by them: `remove_reader`
-cancels the stored `Handle`, so an already-queued readiness callback for a
-removed fd never fires (anyio's futures assume it); `connection_lost` is
-scheduled exactly once however `close()`, `abort()`, and fatal errors overlap
-(anyio's `aclose` does close-then-abort, and a missed schedule leaks the
-socket); a cancelled connect attempt closes its socket; and a raised
-`create_connection` error must not keep a referrer to the attempt-error list.
-`MiniServer` mirrors 3.13 `Server` exactly (test_server pins it):
-`wait_closed()` returns only once the server is closed *and* the last client
-transport is gone, `close_clients()`/`abort_clients()` act on a `WeakSet` of
-attached transports, a cancelled `serve_forever` closes the server and its
-clients before re-raising, and a Unix socket path is unlinked at close only
-when its inode still matches the one bound (`cleanup_socket=False` disables).
-A cancelled timer leaves the reactor's timer map at once: `schedule_at`
-returns a `(deadline µs, seq)` key, the `TimerHandle` subclass carries it, and
-`_timer_handle_cancelled` removes the entry. Retention until the original
-deadline would grow memory for an hour per cancelled `wait_for(..., 3600)`.
-From the aiohttp suite: `loop.time()` must be anchored to `time.monotonic`
-(connectors compare the two directly), so the reactor clock carries a
-constant offset captured at loop creation; and a transport must not hold an
-explicit `memoryview` export of its write buffer across a `send` that can
-raise, because the raised exception's traceback keeps the export alive and
-the buffer can then never be resized (send the bytearray itself, as the
-standard loop does).
+Contracts learned from the oracles, kept working by them: `remove_reader` cancels the stored `Handle`, so an already-queued readiness callback for a removed fd never fires; `connection_lost` is scheduled exactly once however `close()`, `abort()`, and fatal errors overlap; and a Unix socket path is unlinked at close only when its inode still matches the one bound. A cancelled timer leaves the reactor's timer map at once: `schedule_at` returns a `(deadline µs, seq)` key, the `TimerHandle` subclass carries it, and `_timer_handle_cancelled` removes the entry. Retention until the original deadline would grow memory for an hour per cancelled `wait_for(..., 3600)`. The reactor clock carries a constant offset captured at loop creation because aiohttp compares `loop.time()` with `time.monotonic`. A socket transport sends its bytearray directly rather than holding an explicit `memoryview` export across a potentially raising `send`, whose traceback could otherwise keep the buffer unresizable.
 
 ## Deliberately not implemented yet
 
-Sendfile and Windows.
-`AbstractEventLoop` raises `NotImplementedError` for these, which is the
-honest signal while the compatibility ladder is climbed. Next rungs and their
-oracles (anyio/aiohttp/httpx/websockets test suites) are listed in kernmini
-`meta/ROUGH.md`.
+Native sendfile and Windows. `BaseEventLoop` provides the portable buffered sendfile fallback; the socket transport declares that capability rather than pretending to support the platform-native fast path.
 
 ## Tests
 
@@ -107,25 +30,16 @@ The tiers, so the inner loop stays seconds:
 
 - `pytest -q` per change (~2s).
 - `pytest -m oracle -n auto` when a feature lands, not per edit.
-- `pytest -m bench -s` and `pytest -m soak -s` only when performance or
-  stability is the question.
+- `pytest -m bench -s` and `pytest -m soak -s` only when performance or stability is the question.
 - `chkstyle` once, at the final PR stage, never per edit.
 
-`pytest -q`. Ten integration stories, deliberately few: scheduling/tasks/
-threads (timers, contextvars, gather, TaskGroup, timeout, cancellation,
-cross-thread wakeup, to_thread), socket I/O through the reactor (accept/
-connect/backpressure on a 5MB payload), asyncio streams echo with drain
-backpressure, a background task surviving between `run_until_complete` calls
-(the kernel-persistence story), KeyboardInterrupt injection with the loop
-reused afterwards, uvicorn serving an ASGI app fetched by urllib and by
-httpx-over-anyio, TLS echo against a throwaway openssl cert, a subprocess
-round-trip (exec and shell, streams and communicate), and the
-interrupt-torture story: window-scoped `PyThreadState_SetAsyncExc` injection
-under stream/timer/cross-thread load, mirroring kernmini's
-`sync_execution_context` contract (0.5s by default; `LOOPMINI_TORTURE_SECONDS`
-extends it), and the KI-at-`_run`-entry orphan repro that pins the
-traceback-depth requeue rule. Rust-side unit tests should exist only for
-reactor invariants Python stories cannot reach.
+To test against another Python version locally (the workspace venv is pinned, so
+plain `uv run --python` refuses): `uv run --no-project --python 3.14 --with
+'.[dev]' pytest -q` from the repo root. uv builds against its managed
+interpreter into its cache, so repeat runs are fast and there is no venv to
+maintain. CI runs the same suite on every supported version.
+
+`pytest -q`. Eleven integration stories, deliberately few: scheduling/tasks/threads (timers, contextvars, gather, TaskGroup, timeout, cancellation, cross-thread wakeup, to_thread), socket I/O through the reactor (accept/connect/backpressure on a 5MB payload), asyncio streams echo with drain backpressure, a background task surviving between `run_until_complete` calls (the kernel-persistence story), KeyboardInterrupt injection with the loop reused afterwards, uvicorn serving an ASGI app fetched by urllib and by httpx-over-anyio, TLS echo against a throwaway openssl cert, a subprocess round-trip (exec and shell, streams and communicate), and the interrupt-torture story: window-scoped `PyThreadState_SetAsyncExc` injection under stream/timer/cross-thread load, mirroring kernmini's `sync_execution_context` contract (0.5s by default; `LOOPMINI_TORTURE_SECONDS` extends it), and the KI-at-`_run`-entry orphan repro that pins the traceback-depth requeue rule. Rust-side unit tests should exist only for reactor invariants Python stories cannot reach.
 
 Two CPython 3.13 facts the torture test depends on, discovered the hard way:
 an async-injected exception raised at an eval-breaker check escapes the
@@ -145,8 +59,7 @@ pytest -m oracle -n auto          # all four suites, one worker per module
 pytest -m oracle -k uvloop        # one suite; add "and test_tcp" etc. for one module
 ```
 
-`tests/oracle_util.py` fetches and caches what each suite needs under
-`~/.cache/loopmini-oracle` (override with `LOOPMINI_ORACLE_CACHE`):
+`tests/oracle_util.py` fetches and caches what each suite needs under `~/.cache/loopmini-oracle` (override with `LOOPMINI_ORACLE_CACHE`). Modified external source trees are content-addressed by the source of their adapter function, so changing an adapter creates a fresh fixture while unchanged fixtures retain their cache:
 
 - CPython's own test_asyncio (uvloop's strategy). This uv-managed Python ships
   without the stdlib `test` package, so the matching source tarball is fetched
@@ -165,20 +78,9 @@ pytest -m oracle -k uvloop        # one suite; add "and test_tcp" etc. for one m
   onto loopmini with `implementation='asyncio'`, so branchy tests take the
   standard-loop expectation paths. `test_tcp` needs pyOpenSSL and is skipped
   without it.
-- aiohttp's test suite: the sdist is unpacked, uvloop is stubbed to loopmini in
-  its conftest so `--aiohttp-loop=uvloop` selects it, and its blockbuster
-  fixture gains an allowlist entry for `MiniServer.close` (the same
-  unlink-if-unchanged stat asyncio's `_stop_serving` is allowlisted for).
-  Runs the pure-Python aiohttp (`AIOHTTP_NO_EXTENSIONS=1`), with a private
-  `--basetemp` because its permission tests leave chmod-000 dirs that
-  pytest's numbered-dir sweeper cannot remove, fatal under aiohttp's
-  `filterwarnings = error`. Deselected, with reasons in `test_oracle.py`:
-  tests that fail identically on the standard loop in this venv, and one
-  test that mock-patches `loop.time()`, which only steers loops whose timer
-  arithmetic reads Python-level time each turn (real uvloop fails it too).
+- aiohttp's test suite: the sdist is unpacked, uvloop is stubbed to loopmini in its conftest so `--aiohttp-loop=uvloop` selects it, and its blockbuster fixture gains an allowlist entry for the same unlink-if-unchanged stat used by asyncio's Unix loop. It runs pure-Python aiohttp (`AIOHTTP_NO_EXTENSIONS=1`) with a private `--basetemp`, because permission tests leave chmod-000 directories that pytest's numbered-directory sweeper cannot remove under aiohttp's `filterwarnings = error`. Deselections and their reasons live in `test_oracle.py`.
 
-Status on 2026-08-28: all green; 25 oracle tests, the first three suites in
-~17s under xdist and aiohttp's ~4,200 tests in a further ~2 minutes.
+Status on 2026-08-28: all green; 26 oracle stories, including about 4,200 aiohttp tests, complete in about 26 seconds under xdist on the development Mac.
 
 ## The soak gate
 
@@ -191,12 +93,7 @@ component made progress. It watches stability, not speed.
 
 ## Benchmarks
 
-`pytest -m bench -s` prints loopmini vs the standard loop on loop-bound
-microbenchmarks; informational, never gating. Numbers on 2026-08-28 (M-series
-macOS): call_soon 1.10x, sleep0 1.12x, tcp_echo 1.10x, task spawn 2.48x
-(stdlib=1.0). The spawn gap is per-task PyO3 boundary crossings (two to three
-`schedule` calls per task lifecycle at ~0.5µs each); loop startup is at parity.
-Closing it would need handles represented Rust-side, which is later-rung work.
+`pytest -m bench -s` prints loopmini vs the standard loop on loop-bound microbenchmarks; informational, never gating. Numbers on 2026-08-28 (M-series macOS): call_soon 1.04x, sleep0 1.03x, tcp_echo 1.02x, task spawn 1.17x (stdlib=1.0); the corresponding extra cost is approximately 0.5µs per scheduled callback, 0.5µs per `sleep(0)` suspend/resume, 1.1µs per TCP echo, and 0.3µs per spawned task. Median 1ms-timer overshoot is 0.188ms versus 0.156ms.
 
 ## Style and releases
 

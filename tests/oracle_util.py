@@ -1,20 +1,9 @@
 "Fetch, cache, and adapt external event-loop conformance suites (CPython, anyio, uvloop)."
-import asyncio, importlib.metadata, importlib.util, os, platform, shutil, sys, tarfile, types, unittest, urllib.request
+import asyncio, hashlib, importlib.metadata, importlib.util, inspect, os, platform, shutil, sys, tarfile, types, unittest, urllib.request
 from pathlib import Path
 import loopmini
 
 CACHE = Path(os.environ.get('LOOPMINI_ORACLE_CACHE', Path.home()/'.cache'/'loopmini-oracle'))
-
-ANYIO_PARAM = '''import loopmini
-
-asyncio_params.append(
-    pytest.param(
-        ("asyncio", {"debug": True, "loop_factory": loopmini.new_event_loop}),
-        id="asyncio+loopmini",
-    ),
-)
-
-'''
 
 class LoopminiPolicy(asyncio.DefaultEventLoopPolicy):
     def new_event_loop(self): return loopmini.new_event_loop()
@@ -41,49 +30,64 @@ def cpython_test_dir():
     if not (lib/'test').exists(): _fetch_tar(f'https://www.python.org/ftp/python/{ver}/Python-{ver}.tgz', CACHE/f'cpython-{ver}')
     return lib
 
+def _adapted_sdist(name, ver, adapt):
+    "Fetch an sdist into a cache keyed by the source of its local adapter."
+    key = hashlib.sha256(inspect.getsource(adapt).encode()).hexdigest()[:12]
+    cache = CACHE/f'{name}-{ver}-{key}'
+    root,ready = cache/f'{name}-{ver}',cache/'.ready'
+    if not ready.exists():
+        _fetch_tar(f'https://files.pythonhosted.org/packages/source/{name[0]}/{name}/{name}-{ver}.tar.gz', cache)
+        adapt(root)
+        ready.touch()
+    return root
+
+def _adapt_anyio(root):
+    conftest = root/'tests'/'conftest.py'
+    src = conftest.read_text()
+    anchor = 'backend_params = asyncio_params.copy()'
+    assert anchor in src, 'anyio conftest layout changed; adjust oracle_util.anyio_test_dir'
+    param = '''import loopmini
+
+asyncio_params.append(
+    pytest.param(
+        ("asyncio", {"debug": True, "loop_factory": loopmini.new_event_loop}),
+        id="asyncio+loopmini",
+    ),
+)
+
+'''
+    conftest.write_text(src.replace(anchor, param + anchor))
+
 def anyio_test_dir():
     "The sdist of the installed anyio version, with a loopmini entry added to its backend params."
     ver = importlib.metadata.version('anyio')
-    root = CACHE/f'anyio-{ver}'/f'anyio-{ver}'
-    conftest = root/'tests'/'conftest.py'
-    if not conftest.exists():
-        _fetch_tar(f'https://files.pythonhosted.org/packages/source/a/anyio/anyio-{ver}.tar.gz', CACHE/f'anyio-{ver}')
-        src = conftest.read_text()
-        anchor = 'backend_params = asyncio_params.copy()'
-        assert anchor in src, 'anyio conftest layout changed; adjust oracle_util.anyio_test_dir'
-        conftest.write_text(src.replace(anchor, ANYIO_PARAM + anchor))
-    return root
+    return _adapted_sdist('anyio', ver, _adapt_anyio)
 
-AIOHTTP_STUB = """import sys, types, loopmini
+def _adapt_aiohttp(root):
+    conftest = root/'tests'/'conftest.py'
+    src = conftest.read_text()
+    anchor = 'try:\n    if sys.platform == "win32":'
+    assert anchor in src, 'aiohttp conftest layout changed; adjust oracle_util.aiohttp_test_dir'
+    stub = """import sys, types, loopmini
 uvloop = types.ModuleType("uvloop")
 uvloop.new_event_loop = loopmini.new_event_loop
 sys.modules["uvloop"] = uvloop
 """
+    src = src.replace(anchor, stub + anchor)
+    anchor = 'bb.functions["threading.Lock.acquire"].deactivate()'
+    assert anchor in src, 'aiohttp blockbuster fixture changed; adjust oracle_util.aiohttp_test_dir'
+    patch = '''# loopmini does the same unlink-if-unchanged close as asyncio's unix loop
+        for func in ("os.stat", "os.unlink"):
+            bb.functions[func].can_block_in("loopmini/loop.py", "_stop_serving")
+        '''
+    conftest.write_text(src.replace(anchor, patch + anchor))
+    cfg = root/'setup.cfg'
+    cfg.write_text('\n'.join(l for l in cfg.read_text().splitlines() if 'CoverageWarning' not in l) + '\n')
 
 def aiohttp_test_dir():
     "The sdist of the installed aiohttp version, with uvloop stubbed to loopmini so `--aiohttp-loop=uvloop` selects it."
     ver = importlib.metadata.version('aiohttp')
-    root = CACHE/f'aiohttp-{ver}'/f'aiohttp-{ver}'
-    conftest = root/'tests'/'conftest.py'
-    if not conftest.exists():
-        _fetch_tar(f'https://files.pythonhosted.org/packages/source/a/aiohttp/aiohttp-{ver}.tar.gz', CACHE/f'aiohttp-{ver}')
-        src = conftest.read_text()
-        anchor = 'try:\n    if sys.platform == "win32":'
-        assert anchor in src, 'aiohttp conftest layout changed; adjust oracle_util.aiohttp_test_dir'
-        conftest.write_text(src.replace(anchor, AIOHTTP_STUB + anchor))
-        src = conftest.read_text()
-        anchor = 'bb.functions["threading.Lock.acquire"].deactivate()'
-        assert anchor in src, 'aiohttp blockbuster fixture changed; adjust oracle_util.aiohttp_test_dir'
-        patch = '''# loopmini does the same unlink-if-unchanged close as asyncio's
-        # unix_events._stop_serving, which blockbuster allowlists by filename
-        for func in ("os.stat", "os.unlink"):
-            bb.functions[func].can_block_in("loopmini/transports.py", "close")
-        '''
-        conftest.write_text(src.replace(anchor, patch + anchor))
-        cfg = root/'setup.cfg'
-        # Its warning filter needs the coverage package; the tests do not
-        cfg.write_text('\n'.join(l for l in cfg.read_text().splitlines() if 'CoverageWarning' not in l) + '\n')
-    return root
+    return _adapted_sdist('aiohttp', ver, _adapt_aiohttp)
 
 def uvloop_repo():
     "A uvloop source clone (its test suite is loop-parameterized by design); None if not present."

@@ -1,6 +1,6 @@
 [package]
 name = "loopmini"
-version = "0.1.2"
+version = "0.2.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "Rust-backed asyncio event loop"
@@ -13,10 +13,6 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 pyo3 = { version = ">=0.28", features = ["py-clone"] }
 polling = "3"
-tokio = { version = "1", features = ["rt", "time", "net"] }
-
-[dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread"] }
 
 [features]
 extension-module = ["pyo3/extension-module"]

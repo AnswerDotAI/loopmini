@@ -20,9 +20,9 @@ pip install loopmini
 
 ## Design
 
-The Python side subclasses `asyncio.AbstractEventLoop` and reuses the stock `Task`, `Future`, `Handle`, and `sslproto` machinery. Contextvars, cancellation, and task introspection therefore behave exactly as in the standard loop. CPython releases change little that loopmini must track, because the version-sensitive objects are CPython's own.
+The Python side subclasses `asyncio.BaseEventLoop` and reuses its task, future, executor, error-handling, networking, server, sendfile, and subprocess machinery. Reactor-neutral socket, Unix, pipe, and accept implementations come directly from CPython's selector loop. Loopmini supplies the scheduling and fd-readiness hooks plus socket and datagram transports, so version-sensitive asyncio behavior remains CPython's own.
 
-The Rust side owns fd readiness, timers, and cross-thread wakeup. A small level-triggered reactor core (the `polling` crate, kqueue/epoll) is hosted on a Tokio current-thread runtime, which waits on the reactor's own pollable fd. This split preserves the level-triggered `add_reader` contract that asyncio requires and Tokio's edge-triggered driver cannot express. Rust futures spawned on the runtime advance during every blocking poll, with the GIL released, on the same thread and reactor as the Python loop.
+The Rust side owns fd readiness, timers, and cross-thread wakeup through a small level-triggered reactor core (`polling`, using kqueue/epoll). The Python driver blocks directly in the reactor with the GIL released. The same PyO3-free core is available to Rust consumers; embedding runtimes can run futures on their own workers and wake the Python loop through its thread-safe scheduling path.
 
 ## Compatibility
 
@@ -34,5 +34,4 @@ A KeyboardInterrupt injected while the loop runs (the kernel interrupt mechanism
 
 ## Performance
 
-Throughput matches the standard loop on real I/O workloads. A 30-second soak serving a fasthtml app under concurrent HTTP and websocket load holds a 2.6ms median response with no fd or memory growth. Microbenchmarks run 5 to 15% slower than the standard loop, and creating a task costs about twice as much, because each schedule crosses the Python/Rust boundary. uvloop is faster where speed is the requirement.
-
+Throughput matches the standard loop on real I/O workloads. A 30-second soak serving a fasthtml app under concurrent HTTP and websocket load holds a 2.6ms median response with no fd or memory growth. There is a small overhead involved in getting the better interrupt semantics, due to having to cross the Rust boundary. It applies only when something is scheduled onto the loop, and is then under 1µs per operation: `create_task`, an `await` that suspends, `asyncio.sleep`, or `call_soon`. Code that stays inside Python, including an `await` that does not suspend, pays nothing. The median overshoot of a 1ms timer is ~0.2ms, similar to Python's standard loop.

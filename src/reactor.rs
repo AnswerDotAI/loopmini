@@ -51,9 +51,6 @@ impl<H: Clone> Reactor<H> {
 
     pub fn time(&self) -> f64 { self.start.elapsed().as_secs_f64() }
 
-    /// The poller's own fd (a kqueue/epoll fd is itself pollable), for embedding in another reactor.
-    pub fn poller_fd(&self) -> std::os::fd::RawFd { std::os::fd::AsRawFd::as_raw_fd(&self.poller) }
-
     pub fn schedule(&self, h: H) { self.inner.lock().unwrap().ready.push_back(h) }
 
     /// Safe from any thread: queues the handle and wakes a blocked `poll`.
@@ -74,9 +71,7 @@ impl<H: Clone> Reactor<H> {
 
     /// Drop a scheduled timer. False when it already fired (or was already removed):
     /// the promoted handle then carries its own cancelled flag, which dispatch skips.
-    pub fn cancel_timer(&self, key: (u64, u64)) -> bool {
-        self.inner.lock().unwrap().timers.remove(&key).is_some()
-    }
+    pub fn cancel_timer(&self, key: (u64, u64)) -> bool { self.inner.lock().unwrap().timers.remove(&key).is_some() }
 
     pub fn timer_count(&self) -> usize { self.inner.lock().unwrap().timers.len() }
 
@@ -95,10 +90,7 @@ impl<H: Clone> Reactor<H> {
         let had = if write { e.writer.take().is_some() } else { e.reader.take().is_some() };
         let empty = e.reader.is_none() && e.writer.is_none();
         let ev = interest(fd, e);
-        if empty {
-            inner.fds.remove(&fd);
-            let _ = self.poller.delete(borrowed(fd));
-        } else { self.poller.modify(borrowed(fd), ev)? }
+        if empty { inner.fds.remove(&fd); let _ = self.poller.delete(borrowed(fd)); } else { self.poller.modify(borrowed(fd), ev)? }
         Ok(had)
     }
 
@@ -134,16 +126,12 @@ impl<H: Clone> Reactor<H> {
         let Inner { ready, timers, .. } = &mut *inner;
         self.drain_tsq(ready);
         let now = self.now_us();
-        while timers.first_key_value().is_some_and(|((when, _), _)| *when <= now) {
-            let (_, h) = timers.pop_first().unwrap();
-            ready.push_back(h);
-        }
+        while timers.first_key_value().is_some_and(|((when, _), _)| *when <= now) { let (_, h) = timers.pop_first().unwrap(); ready.push_back(h); }
         // Clamped like CPython's MAXIMUM_SELECT_TIMEOUT: a sleep(inf) timer saturates
         // to u64::MAX, and a pure-Rust consumer blocking in `poll` would hand that
         // timespec to kqueue, which rejects it with EINVAL
         const MAX_POLL_US: u64 = 86_400_000_000;
-        ControlFlow::Continue(if !ready.is_empty() { Some(Duration::ZERO) }
-            else { timers.first_key_value().map(|((when, _), _)| Duration::from_micros((when - now + 1).min(MAX_POLL_US))) })
+        ControlFlow::Continue(if !ready.is_empty() { Some(Duration::ZERO) } else { timers.first_key_value().map(|((when, _), _)| Duration::from_micros((when - now + 1).min(MAX_POLL_US))) })
     }
 
     /// Blocking wait; holds no locks, so drivers may run it with the GIL released.
@@ -174,5 +162,23 @@ impl<H: Clone> Reactor<H> {
     pub fn requeue_front(&self, items: impl DoubleEndedIterator<Item = H>) {
         let mut inner = self.inner.lock().unwrap();
         for h in items.rev() { inner.ready.push_front(h) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::thread;
+
+    #[test]
+    fn cross_thread_schedule_wakes_poll() {
+        let reactor = Arc::new(Reactor::new().unwrap());
+        let sender = reactor.clone();
+        let thread = thread::spawn(move || { thread::sleep(Duration::from_millis(10)); sender.schedule_ts("ready").unwrap(); });
+        let events = reactor.poll(None).unwrap();
+        reactor.process(&events);
+        thread.join().unwrap();
+        assert_eq!(reactor.take_batch().into_iter().collect::<Vec<_>>(), vec!["ready"]);
     }
 }

@@ -7,7 +7,7 @@ name = "loopmini"
 dynamic = ["version"]
 description = "Rust-backed asyncio event loop"
 license = {text = "Apache-2.0"}
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 readme = "README.md"
 authors = [{name = "Jeremy Howard", email = "github@jhoward.fastmail.fm"}]
 classifiers = [
