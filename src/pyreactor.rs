@@ -44,14 +44,22 @@ impl PyReactor {
                 // An injected async exception (e.g. KeyboardInterrupt) can surface at either
                 // Python call; only a handle whose _run began may be dropped without requeue.
                 let cancelled = h.bind(py).getattr(intern!(py, "_cancelled")).and_then(|v| v.extract::<bool>());
-                match cancelled { Err(e) => { self.core.requeue_front(std::iter::once(h).chain(it)); return Err(e); } Ok(true) => continue, Ok(false) => {} }
+                match cancelled {
+                    Err(e) => {
+                        self.core.requeue_front(std::iter::once(h).chain(it));
+                        return Err(e);
+                    }
+                    Ok(true) => continue,
+                    Ok(false) => {}
+                }
                 if let Err(e) = h.bind(py).call_method0(intern!(py, "_run")) {
                     // An injected exception surfacing at `_run`'s entry leaves a single-frame
                     // traceback: the callback never ran, so requeue the handle - dropping it
                     // would lose e.g. a task wakeup and orphan the task. A deeper traceback
                     // means the callback began, so the handle is consumed (CPython semantics).
                     let entry_only = e.traceback(py).map_or(true, |tb| tb.getattr("tb_next").ok().is_none_or(|n| n.is_none()));
-                    if entry_only { self.core.requeue_front(std::iter::once(h).chain(it)) } else { self.core.requeue_front(it) }
+                    if entry_only { self.core.requeue_front(std::iter::once(h).chain(it)) }
+                    else { self.core.requeue_front(it) }
                     return Err(e);
                 }
             }

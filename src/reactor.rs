@@ -79,7 +79,8 @@ impl<H: Clone> Reactor<H> {
         let mut inner = self.inner.lock().unwrap();
         let fresh = !inner.fds.contains_key(&fd);
         let e = inner.fds.entry(fd).or_default();
-        if write { e.writer = Some(h) } else { e.reader = Some(h) }
+        if write { e.writer = Some(h) }
+        else { e.reader = Some(h) }
         let ev = interest(fd, e);
         if fresh { unsafe { self.poller.add(fd as i32, ev) } } else { self.poller.modify(borrowed(fd), ev) }
     }
@@ -90,7 +91,11 @@ impl<H: Clone> Reactor<H> {
         let had = if write { e.writer.take().is_some() } else { e.reader.take().is_some() };
         let empty = e.reader.is_none() && e.writer.is_none();
         let ev = interest(fd, e);
-        if empty { inner.fds.remove(&fd); let _ = self.poller.delete(borrowed(fd)); } else { self.poller.modify(borrowed(fd), ev)? }
+        if empty {
+            inner.fds.remove(&fd);
+            let _ = self.poller.delete(borrowed(fd));
+        }
+        else { self.poller.modify(borrowed(fd), ev)? }
         Ok(had)
     }
 
@@ -122,11 +127,17 @@ impl<H: Clone> Reactor<H> {
     /// cross-thread handles, and say how long the driver may block in `poll`.
     pub fn next_timeout(&self) -> ControlFlow<(), Option<Duration>> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.stop { inner.stop = false; return ControlFlow::Break(()) }
+        if inner.stop {
+            inner.stop = false;
+            return ControlFlow::Break(());
+        }
         let Inner { ready, timers, .. } = &mut *inner;
         self.drain_tsq(ready);
         let now = self.now_us();
-        while timers.first_key_value().is_some_and(|((when, _), _)| *when <= now) { let (_, h) = timers.pop_first().unwrap(); ready.push_back(h); }
+        while timers.first_key_value().is_some_and(|((when, _), _)| *when <= now) {
+            let (_, h) = timers.pop_first().unwrap();
+            ready.push_back(h);
+        }
         // Clamped like CPython's MAXIMUM_SELECT_TIMEOUT: a sleep(inf) timer saturates
         // to u64::MAX, and a pure-Rust consumer blocking in `poll` would hand that
         // timespec to kqueue, which rejects it with EINVAL
@@ -175,7 +186,10 @@ mod tests {
     fn cross_thread_schedule_wakes_poll() {
         let reactor = Arc::new(Reactor::new().unwrap());
         let sender = reactor.clone();
-        let thread = thread::spawn(move || { thread::sleep(Duration::from_millis(10)); sender.schedule_ts("ready").unwrap(); });
+        let thread = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(10));
+            sender.schedule_ts("ready").unwrap();
+        });
         let events = reactor.poll(None).unwrap();
         reactor.process(&events);
         thread.join().unwrap();
