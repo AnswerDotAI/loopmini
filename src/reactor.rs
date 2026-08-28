@@ -139,7 +139,8 @@ impl<H: Clone> Reactor<H> {
             ready.push_back(h);
         }
         // Clamped like CPython's MAXIMUM_SELECT_TIMEOUT: a sleep(inf) timer saturates
-        // to u64::MAX and kqueue rejects such a timespec with EINVAL
+        // to u64::MAX, and a pure-Rust consumer blocking in `poll` would hand that
+        // timespec to kqueue, which rejects it with EINVAL
         const MAX_POLL_US: u64 = 86_400_000_000;
         ControlFlow::Continue(if !ready.is_empty() { Some(Duration::ZERO) }
             else { timers.first_key_value().map(|((when, _), _)| Duration::from_micros((when - now + 1).min(MAX_POLL_US))) })

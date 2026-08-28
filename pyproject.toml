@@ -16,7 +16,9 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["fastship>=0.0.11", "maturin>=1.0,<2.0", "pytest", "pytest-timeout"]
+dev = ["fastship>=0.0.11", "maturin>=1.0,<2.0", "pytest", "pytest-timeout",
+    "pytest-xdist", "trustme", "blockbuster",  # oracle tier
+    "psutil", "httpx", "uvicorn", "websockets", "python-fasthtml"]  # soak tier
 
 [project.urls]
 Homepage = "https://github.com/AnswerDotAI/loopmini"

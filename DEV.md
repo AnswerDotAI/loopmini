@@ -35,7 +35,7 @@ So the crate has three layers:
   and readiness methods plus the canonical dispatch loop (`check_signals` each
   turn, `py.detach` around `poll`, EINTR retry, and the injected-exception
   requeue rule, which must exist exactly once). `loopmini._core` registers it
-  on an owned runtime; kernmini-python compiles the same struct and constructs
+  on an owned runtime; kernmini's Python feature compiles the same struct and constructs
   it with `PyReactor::with_handle` on kernmini's runtime. Rust has no stable
   dylib ABI, so runtimes and reactors never cross extension boundaries: each
   extension compiles the crate in, and the Python-visible reactor methods are

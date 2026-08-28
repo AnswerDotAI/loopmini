@@ -1,6 +1,6 @@
 //! The Python-facing reactor: scheduling and readiness methods plus the canonical
 //! dispatch loop, as one pyclass both extensions compile in. `loopmini._core`
-//! registers it with an owned runtime; an embedding extension (kernmini-python)
+//! registers it with an owned runtime; an embedding extension (`kernmini._native`)
 //! constructs it with `with_handle` on its own runtime. The dispatch loop carries
 //! the injected-exception requeue rule, which must exist exactly once.
 use crate::tokio_core::TokioCore;
