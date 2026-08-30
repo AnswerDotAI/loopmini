@@ -17,3 +17,20 @@ polling = "3"
 [features]
 python = ["dep:pyo3"]
 extension-module = ["python", "pyo3/extension-module"]
+
+[profile.release]
+lto = false
+codegen-units = 16
+
+[profile.release.package.loopmini]
+incremental = true
+
+[profile.dist]
+inherits = "release"
+lto = true
+incremental = false
+codegen-units = 1
+strip = true
+
+[profile.dist.package.loopmini]
+incremental = false
