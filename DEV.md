@@ -33,26 +33,15 @@ The tiers, so the inner loop stays seconds:
 - `pytest -m bench -s` and `pytest -m soak -s` only when performance or stability is the question.
 - `chkstyle` once, at the final PR stage, never per edit.
 
-To test against another Python version locally (the workspace venv is pinned, so
-plain `uv run --python` refuses): `uv run --no-project --python 3.14 --with
-'.[dev]' pytest -q` from the repo root. uv builds against its managed
-interpreter into its cache, so repeat runs are fast and there is no venv to
-maintain. CI runs the same suite on every supported version.
+To test against another Python version locally (the workspace venv is pinned, so plain `uv run --python` refuses): `uv run --no-project --python 3.14 --with '.[dev]' pytest -q` from the repo root. uv builds against its managed interpreter into its cache, so repeat runs are fast and there is no venv to maintain. CI runs the same suite on every supported version.
 
 `pytest -q`. Eleven integration stories, deliberately few: scheduling/tasks/threads (timers, contextvars, gather, TaskGroup, timeout, cancellation, cross-thread wakeup, to_thread), socket I/O through the reactor (accept/connect/backpressure on a 5MB payload), asyncio streams echo with drain backpressure, a background task surviving between `run_until_complete` calls (the kernel-persistence story), KeyboardInterrupt injection with the loop reused afterwards, uvicorn serving an ASGI app fetched by urllib and by httpx-over-anyio, TLS echo against a throwaway openssl cert, a subprocess round-trip (exec and shell, streams and communicate), and the interrupt-torture story: window-scoped `PyThreadState_SetAsyncExc` injection under stream/timer/cross-thread load, mirroring kernmini's `sync_execution_context` contract (0.5s by default; `LOOPMINI_TORTURE_SECONDS` extends it), and the KI-at-`_run`-entry orphan repro that pins the traceback-depth requeue rule. Rust-side unit tests should exist only for reactor invariants Python stories cannot reach.
 
-Two CPython 3.13 facts the torture test depends on, discovered the hard way:
-an async-injected exception raised at an eval-breaker check escapes the
-raising frame even past a same-frame `try/except` (open regression
-[gh-139622](https://github.com/python/cpython/issues/139622); 3.12 and 3.14
-unaffected), so the guard must sit in a parent frame; and a busy window
-shorter than the GIL switch interval (5ms) is invisible to a sampling thread,
-because the GIL is only ever released while the window is closed.
+Two CPython 3.13 facts the torture test depends on, discovered the hard way: an async-injected exception raised at an eval-breaker check escapes the raising frame even past a same-frame `try/except` (open regression [gh-139622](https://github.com/python/cpython/issues/139622); 3.12 and 3.14 unaffected), so the guard must sit in a parent frame; and a busy window shorter than the GIL switch interval (5ms) is invisible to a sampling thread, because the GIL is only ever released while the window is closed.
 
 ## The compatibility oracles
 
-Four external suites are the conformance measure, run in-repo through
-`tests/test_oracle.py` (marked `oracle`, deselected by default):
+Four external suites are the conformance measure, run in-repo through `tests/test_oracle.py` (marked `oracle`, deselected by default):
 
 ```bash
 pytest -m oracle -n auto          # all four suites, one worker per module
@@ -61,35 +50,16 @@ pytest -m oracle -k uvloop        # one suite; add "and test_tcp" etc. for one m
 
 `tests/oracle_util.py` fetches and caches what each suite needs under `~/.cache/loopmini-oracle` (override with `LOOPMINI_ORACLE_CACHE`). Modified external source trees are content-addressed by the source of their adapter function, so changing an adapter creates a fresh fixture while unchanged fixtures retain their cache:
 
-- CPython's own test_asyncio (uvloop's strategy). This uv-managed Python ships
-  without the stdlib `test` package, so the matching source tarball is fetched
-  and its functional modules run under a loopmini event-loop policy. Suites
-  asserting standard-loop internals (base_events, selector_events,
-  unix_events) are not fair oracles and are excluded.
-- anyio's test suite, via its sanctioned alternative-loop mechanism: the sdist
-  matching the installed version is unpacked and a loopmini entry added to
-  `asyncio_params` in its conftest. Runs as a subprocess; requires the anyio
-  test deps (`trustme`, `blockbuster`) in the venv. blockbuster's
-  blocking-call detector allowlists Popen's blocking os.read only under
-  `asyncio/base_events.py`, which is one reason the Popen spawn goes through
-  the executor.
-- uvloop's test suite, from a source clone (`LOOPMINI_UVLOOP_REPO`, default
-  `~/aai-ws/links/uvloop`): its loop-parameterized test classes are cloned
-  onto loopmini with `implementation='asyncio'`, so branchy tests take the
-  standard-loop expectation paths. `test_tcp` needs pyOpenSSL and is skipped
-  without it.
+- CPython's own test_asyncio (uvloop's strategy). This uv-managed Python ships without the stdlib `test` package, so the matching source tarball is fetched and its functional modules run under a loopmini event-loop policy. Suites asserting standard-loop internals (base_events, selector_events, unix_events) are not fair oracles and are excluded.
+- anyio's test suite, via its sanctioned alternative-loop mechanism: the sdist matching the installed version is unpacked and a loopmini entry added to `asyncio_params` in its conftest. Runs as a subprocess; requires the anyio test deps (`trustme`, `blockbuster`) in the venv. blockbuster's blocking-call detector allowlists Popen's blocking os.read only under `asyncio/base_events.py`, which is one reason the Popen spawn goes through the executor.
+- uvloop's test suite, from a source clone (`LOOPMINI_UVLOOP_REPO`, default `~/aai-ws/links/uvloop`): its loop-parameterized test classes are cloned onto loopmini with `implementation='asyncio'`, so branchy tests take the standard-loop expectation paths. `test_tcp` needs pyOpenSSL and is skipped without it.
 - aiohttp's test suite: the sdist is unpacked, uvloop is stubbed to loopmini in its conftest so `--aiohttp-loop=uvloop` selects it, and its blockbuster fixture gains an allowlist entry for the same unlink-if-unchanged stat used by asyncio's Unix loop. It runs pure-Python aiohttp (`AIOHTTP_NO_EXTENSIONS=1`) with a private `--basetemp`, because permission tests leave chmod-000 directories that pytest's numbered-directory sweeper cannot remove under aiohttp's `filterwarnings = error`. Deselections and their reasons live in `test_oracle.py`.
 
 Status on 2026-08-28: all green; 26 oracle stories, including about 4,200 aiohttp tests, complete in about 26 seconds under xdist on the development Mac.
 
 ## The soak gate
 
-`pytest -m soak -s` runs a kernel-shaped workload on one loopmini loop for
-`LOOPMINI_SOAK_SECONDS` (default 30): a fasthtml app on uvicorn under
-threaded httpx load, a websocket echo server with a bot-style client, a
-housekeeping tick, and periodic cells submitted from another thread, as a
-kernel would. It asserts zero errors, bounded fd growth, and that every
-component made progress. It watches stability, not speed.
+`pytest -m soak -s` runs a kernel-shaped workload on one loopmini loop for `LOOPMINI_SOAK_SECONDS` (default 30): a fasthtml app on uvicorn under threaded httpx load, a websocket echo server with a bot-style client, a housekeeping tick, and periodic cells submitted from another thread, as a kernel would. It asserts zero errors, bounded fd growth, and that every component made progress. It watches stability, not speed.
 
 ## Benchmarks
 
@@ -97,5 +67,4 @@ component made progress. It watches stability, not speed.
 
 ## Style and releases
 
-fastai style (`chkstyle` before committing). Releases via fastship; the tree
-carries the next version.
+fastai style (`chkstyle` before committing). Releases via fastship; the tree carries the next version.
