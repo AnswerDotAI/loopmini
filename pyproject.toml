@@ -1,12 +1,12 @@
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
+requires = ["maturin>=1.9.2,<2.0"]
 build-backend = "maturin"
 
 [project]
 name = "loopmini"
 dynamic = ["version"]
 description = "Rust-backed asyncio event loop"
-license = {text = "Apache-2.0"}
+license = "Apache-2.0"
 requires-python = ">=3.11"
 readme = "README.md"
 authors = [{name = "Jeremy Howard", email = "github@jhoward.fastmail.fm"}]
