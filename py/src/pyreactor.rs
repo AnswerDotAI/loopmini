@@ -1,7 +1,7 @@
 //! The Python-facing reactor: scheduling and readiness methods plus the canonical
 //! dispatch loop. The dispatch loop carries the injected-exception requeue rule,
 //! which must exist exactly once.
-use crate::reactor::Reactor as ReactorCore;
+use loopmini::reactor::Reactor as ReactorCore;
 use polling::Events;
 use pyo3::intern;
 use pyo3::prelude::*;

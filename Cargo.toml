@@ -1,28 +1,39 @@
-[package]
-name = "loopmini"
+[workspace]
+members = ["py"]
+default-members = [".", "py"]
+
+[workspace.package]
 version = "0.2.3"
 edition = "2021"
+
+[workspace.dependencies]
+polling = "3"
+
+[package]
+name = "loopmini"
+version.workspace = true
+edition.workspace = true
 license = "Apache-2.0"
 description = "Rust-backed asyncio event loop"
 repository = "https://github.com/AnswerDotAI/loopmini"
 
 [lib]
 name = "loopmini"
-crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = ">=0.28", features = ["py-clone"], optional = true }
-polling = "3"
+polling.workspace = true
 
-[features]
-python = ["dep:pyo3"]
-extension-module = ["python", "pyo3/extension-module"]
+[profile.test]
+inherits = "release"
 
 [profile.release]
 lto = false
 codegen-units = 16
 
 [profile.release.package.loopmini]
+incremental = true
+
+[profile.release.package.loopmini-py]
 incremental = true
 
 [profile.dist]
@@ -33,4 +44,7 @@ codegen-units = 1
 strip = true
 
 [profile.dist.package.loopmini]
+incremental = false
+
+[profile.dist.package.loopmini-py]
 incremental = false

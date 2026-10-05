@@ -1,0 +1,17 @@
+[package]
+name = "loopmini-py"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+test = false
+
+[dependencies]
+loopmini = { path = ".." }
+polling.workspace = true
+pyo3 = { version = ">=0.28", features = ["extension-module", "py-clone"] }
+
+[build-dependencies]
+pyo3-build-config = "0.29"

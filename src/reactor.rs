@@ -54,10 +54,7 @@ impl<H: Clone> Reactor<H> {
     pub fn schedule(&self, h: H) { self.inner.lock().unwrap().ready.push_back(h) }
 
     /// Safe from any thread: queues the handle and wakes a blocked `poll`.
-    pub fn schedule_ts(&self, h: H) -> io::Result<()> {
-        self.tsq.lock().unwrap().push_back(h);
-        self.poller.notify()
-    }
+    pub fn schedule_ts(&self, h: H) -> io::Result<()> { self.tsq.lock().unwrap().push_back(h); self.poller.notify() }
 
     /// `when` is in seconds on this reactor's `time()` clock. Returns the timer's
     /// key, which `cancel_timer` accepts until the timer fires.
@@ -104,10 +101,7 @@ impl<H: Clone> Reactor<H> {
     pub fn remove_reader(&self, fd: usize) -> io::Result<bool> { self.rm_side(fd, false) }
     pub fn remove_writer(&self, fd: usize) -> io::Result<bool> { self.rm_side(fd, true) }
 
-    pub fn stop(&self) -> io::Result<()> {
-        self.inner.lock().unwrap().stop = true;
-        self.poller.notify()
-    }
+    pub fn stop(&self) -> io::Result<()> { self.inner.lock().unwrap().stop = true; self.poller.notify() }
 
     pub fn close(&self) {
         let mut inner = self.inner.lock().unwrap();
@@ -118,10 +112,7 @@ impl<H: Clone> Reactor<H> {
         self.tsq.lock().unwrap().clear();
     }
 
-    fn drain_tsq(&self, ready: &mut VecDeque<H>) {
-        let mut q = self.tsq.lock().unwrap();
-        while let Some(h) = q.pop_front() { ready.push_back(h) }
-    }
+    fn drain_tsq(&self, ready: &mut VecDeque<H>) { let mut q = self.tsq.lock().unwrap(); while let Some(h) = q.pop_front() { ready.push_back(h) } }
 
     /// One turn's first phase: consume a pending stop, promote due timers and
     /// cross-thread handles, and say how long the driver may block in `poll`.

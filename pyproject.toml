@@ -16,7 +16,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["fastship>=0.0.11", "maturin>=1.0,<2.0", "pytest", "pytest-timeout",
+dev = ["fastws-cli>=0.0.20", "fastship>=0.0.11", "maturin>=1.0,<2.0", "pytest", "pytest-timeout",
     "pytest-xdist", "trustme", "blockbuster",  # oracle tier
     "psutil", "httpx", "uvicorn", "websockets", "python-fasthtml"]  # soak tier
 
@@ -26,12 +26,12 @@ Repository = "https://github.com/AnswerDotAI/loopmini"
 Issues = "https://github.com/AnswerDotAI/loopmini/issues"
 
 [tool.maturin]
-features = ["extension-module"]
+manifest-path = "py/Cargo.toml"
 python-source = "python"
 module-name = "loopmini._core"
 
 [tool.uv]
-cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.rs" }, { file = "Cargo.toml" }, { file = ".git/fastws-cargo-key" }]
+cache-keys = [{ file = "pyproject.toml" }, { file = "Cargo.toml" }, { file = "py/Cargo.toml" }]
 
 [tool.fastship]
 branch = "main"
