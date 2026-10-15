@@ -13,10 +13,7 @@ impl<H> Default for FdEntry<H> { fn default() -> Self { Self { reader: None, wri
 
 fn interest<H>(key: usize, e: &FdEntry<H>) -> Event {
     match (e.reader.is_some(), e.writer.is_some()) {
-        (true, true) => Event::all(key),
-        (true, false) => Event::readable(key),
-        (false, true) => Event::writable(key),
-        (false, false) => Event::none(key),
+        (true, true) => Event::all(key), (true, false) => Event::readable(key), (false, true) => Event::writable(key), (false, false) => Event::none(key)
     }
 }
 
@@ -30,21 +27,12 @@ struct Inner<H> {
     stop: bool,
 }
 
-pub struct Reactor<H> {
-    inner: Mutex<Inner<H>>,
-    tsq: Mutex<VecDeque<H>>,
-    poller: Poller,
-    start: Instant,
-}
+pub struct Reactor<H> { inner: Mutex<Inner<H>>, tsq: Mutex<VecDeque<H>>, poller: Poller, start: Instant }
 
 impl<H: Clone> Reactor<H> {
     pub fn new() -> io::Result<Self> {
-        Ok(Self {
-            inner: Mutex::new(Inner { ready: VecDeque::new(), timers: BTreeMap::new(), fds: HashMap::new(), seq: 0, stop: false }),
-            tsq: Mutex::new(VecDeque::new()),
-            poller: Poller::new()?,
-            start: Instant::now(),
-        })
+        Ok(Self { inner: Mutex::new(Inner { ready: VecDeque::new(), timers: BTreeMap::new(), fds: HashMap::new(), seq: 0, stop: false }),
+            tsq: Mutex::new(VecDeque::new()), poller: Poller::new()?, start: Instant::now() })
     }
 
     fn now_us(&self) -> u64 { self.start.elapsed().as_micros() as u64 }
@@ -91,8 +79,7 @@ impl<H: Clone> Reactor<H> {
         if empty {
             inner.fds.remove(&fd);
             let _ = self.poller.delete(borrowed(fd));
-        }
-        else { self.poller.modify(borrowed(fd), ev)? }
+        } else { self.poller.modify(borrowed(fd), ev)? }
         Ok(had)
     }
 
@@ -118,10 +105,7 @@ impl<H: Clone> Reactor<H> {
     /// cross-thread handles, and say how long the driver may block in `poll`.
     pub fn next_timeout(&self) -> ControlFlow<(), Option<Duration>> {
         let mut inner = self.inner.lock().unwrap();
-        if inner.stop {
-            inner.stop = false;
-            return ControlFlow::Break(());
-        }
+        if inner.stop { inner.stop = false; return ControlFlow::Break(()); }
         let Inner { ready, timers, .. } = &mut *inner;
         self.drain_tsq(ready);
         let now = self.now_us();
@@ -133,7 +117,8 @@ impl<H: Clone> Reactor<H> {
         // to u64::MAX, and a pure-Rust consumer blocking in `poll` would hand that
         // timespec to kqueue, which rejects it with EINVAL
         const MAX_POLL_US: u64 = 86_400_000_000;
-        ControlFlow::Continue(if !ready.is_empty() { Some(Duration::ZERO) } else { timers.first_key_value().map(|((when, _), _)| Duration::from_micros((when - now + 1).min(MAX_POLL_US))) })
+        ControlFlow::Continue(if !ready.is_empty() { Some(Duration::ZERO) }
+        else { timers.first_key_value().map(|((when, _), _)| Duration::from_micros((when - now + 1).min(MAX_POLL_US))) })
     }
 
     /// Blocking wait; holds no locks, so drivers may run it with the GIL released.

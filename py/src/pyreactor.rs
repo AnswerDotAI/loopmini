@@ -33,9 +33,7 @@ impl PyReactor {
             py.check_signals()?;
             let ControlFlow::Continue(timeout) = self.core.next_timeout() else { return Ok(()) };
             let events = match py.detach(|| self.core.poll(timeout)) {
-                Ok(ev) => ev,
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => Events::new(),
-                Err(e) => return Err(e.into()),
+                Ok(ev) => ev, Err(e) if e.kind() == std::io::ErrorKind::Interrupted => Events::new(), Err(e) => return Err(e.into())
             };
             self.core.process(&events);
             let batch = self.core.take_batch();
@@ -44,14 +42,7 @@ impl PyReactor {
                 // An injected async exception (e.g. KeyboardInterrupt) can surface at either
                 // Python call; only a handle whose _run began may be dropped without requeue.
                 let cancelled = h.bind(py).getattr(intern!(py, "_cancelled")).and_then(|v| v.extract::<bool>());
-                match cancelled {
-                    Err(e) => {
-                        self.core.requeue_front(std::iter::once(h).chain(it));
-                        return Err(e);
-                    }
-                    Ok(true) => continue,
-                    Ok(false) => {}
-                }
+                match cancelled { Err(e) => { self.core.requeue_front(std::iter::once(h).chain(it)); return Err(e); } Ok(true) => continue, Ok(false) => {} }
                 if let Err(e) = h.bind(py).call_method0(intern!(py, "_run")) {
                     // An injected exception surfacing at `_run`'s entry leaves a single-frame
                     // traceback: the callback never ran, so requeue the handle - dropping it
