@@ -29,7 +29,7 @@ def test_anyio():
     pytest.importorskip('trustme')
     pytest.importorskip('blockbuster')
     root = oracle_util.anyio_test_dir()
-    cmd = [sys.executable, '-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider', '--timeout', '120', '-k', 'loopmini']
+    cmd = [sys.executable, '-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider', '-p', 'timeout', '-p', 'anyio', '--timeout', '120', '-k', 'loopmini']
     assert subprocess.run(cmd, cwd=root).returncode == 0
 
 # Fail identically on the standard loop in this venv (missing C extensions,
@@ -47,7 +47,7 @@ def test_aiohttp():
     # tests leave chmod-000 dirs it cannot remove, fatal under `filterwarnings = error`
     basetemp = root/'basetemp'
     if basetemp.exists(): oracle_util.rmtree_force(basetemp)
-    cmd = [sys.executable, '-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider', '--timeout', '120',
+    cmd = [sys.executable, '-m', 'pytest', 'tests', '-q', '-p', 'no:cacheprovider', '-p', 'timeout', '-p', 'xdist', '--timeout', '120',
         '--aiohttp-loop=uvloop', '-n', 'auto', '--tb=line', f'--basetemp={basetemp}'] + [f'--deselect={d}' for d in deselect]
     env = dict(os.environ, AIOHTTP_NO_EXTENSIONS='1')
     assert subprocess.run(cmd, cwd=root, env=env).returncode == 0
