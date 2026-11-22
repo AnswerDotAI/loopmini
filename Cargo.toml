@@ -19,6 +19,8 @@ repository = "https://github.com/AnswerDotAI/loopmini"
 
 [lib]
 name = "loopmini"
+test = false
+doctest = false
 
 [dependencies]
 polling.workspace = true
