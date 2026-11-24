@@ -16,7 +16,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest", "pytest-timeout"]
+test = ["httpx", "pytest", "pytest-timeout"]
 dev = ["fastws-cli>=0.0.20", "fastship>=0.0.11", "maturin>=1.0,<2.0", "loopmini[test]",
     "pytest-xdist", "trustme", "blockbuster",  # oracle tier
     "psutil", "httpx", "uvicorn", "websockets", "python-fasthtml"]  # soak tier
