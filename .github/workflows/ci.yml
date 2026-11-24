@@ -22,7 +22,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv pip install --system -e '.[test]'
+      - run: uv pip install --system -e '.[dev]'
       - run: pytest -q
 
   build:
