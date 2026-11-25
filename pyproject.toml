@@ -1,5 +1,5 @@
 [build-system]
-requires = ["maturin>=1.9.2,<2.0", "fastws-cli>=0.0.25"]
+requires = ["maturin>=1.9.2,<2.0", "fastws-cli>=0.0.42"]
 build-backend = "fastws.build_backend"
 
 [project]
@@ -16,8 +16,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-test = ["httpx", "pytest", "pytest-timeout"]
-dev = ["fastws-cli>=0.0.20", "fastship>=0.0.11", "maturin>=1.0,<2.0", "loopmini[test]", "pytest", "pytest-timeout",
+test = ["fastws-cli>=0.0.42", "pytest", "pytest-timeout"]
+dev = ["fastship>=0.0.11", "maturin>=1.0,<2.0", "loopmini[test]",
     "pytest-xdist", "trustme", "blockbuster",  # oracle tier
     "psutil", "httpx", "uvicorn", "websockets", "python-fasthtml"]  # soak tier
 

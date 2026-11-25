@@ -6,8 +6,10 @@ sets the duration. The verdict asserts zero errors, bounded fd growth, every mid
 "cell" ran, and live servers at the end.
 """
 import asyncio, os, socket, statistics, threading, time
-import httpx, psutil, pytest, uvicorn, websockets
-from fasthtml.common import fast_app, Titled, P
+import pytest
+httpx, psutil, uvicorn, websockets = (pytest.importorskip(m) for m in ('httpx', 'psutil', 'uvicorn', 'websockets'))
+fasthtml = pytest.importorskip('fasthtml.common')
+fast_app, Titled, P = fasthtml.fast_app, fasthtml.Titled, fasthtml.P
 
 pytestmark = [pytest.mark.soak, pytest.mark.timeout(600)]
 
