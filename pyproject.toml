@@ -26,6 +26,7 @@ Homepage = "https://github.com/AnswerDotAI/loopmini"
 Repository = "https://github.com/AnswerDotAI/loopmini"
 Issues = "https://github.com/AnswerDotAI/loopmini/issues"
 
+Documentation = "https://AnswerDotAI.github.io/loopmini/"
 [tool.maturin]
 manifest-path = "py/Cargo.toml"
 python-source = "python"
